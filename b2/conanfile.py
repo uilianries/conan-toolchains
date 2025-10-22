@@ -1,8 +1,14 @@
 import os
+import re
 from conan import ConanFile
 from conan.tools.files import save
 from conan.tools.build import build_jobs
+from conan.tools.microsoft import is_msvc, MSBuildToolchain
+from conan.tools.apple import is_apple_os, XCRun, to_apple_arch
+from conan.tools.scm import Version
 from conan.tools.env import VirtualBuildEnv, Environment
+from conan.tools.build import cross_building
+from conan.errors import ConanException
 
 
 class B2Generator:
@@ -15,50 +21,136 @@ class B2Generator:
     def __init__(self, conanfile):
         self._conanfile = conanfile
         self.user_config_jam = None
-        self.project_config_jam = None        
-        
+        self.project_config_jam = None
+
+    def _validate(self):
+        """Validate required settings for B2 generation"""
+        if not self._conanfile.settings.get_safe("compiler"):
+            raise ConanException("B2Generator requires 'compiler' setting to be defined.")
+        if not self._conanfile.settings.get_safe("build_type"):
+            raise ConanException("B2Generator requires 'build_type' setting to be defined.")
+        if not self._conanfile.settings.get_safe("arch"):
+            raise ConanException("B2Generator requires 'arch' setting to be defined.")
+        if not self._conanfile.settings.get_safe("os"):
+            raise ConanException("B2Generator requires 'os' setting to be defined.")
+
     def generate(self):
         """Generate the B2 toolchain files"""
+        self._validate()
+
         # Generate user-config.jam with toolset configuration
         self._generate_user_config()
         
         # Generate project-config.jam with Conan-specific settings
         self._generate_project_config()
+
+    def _ar(self):
+        ar = VirtualBuildEnv(self._conanfile).vars().get("AR")
+        if ar:
+            return ar.replace("\\", "/")
+        if is_apple_os(self._conanfile) and self._conanfile.settings.compiler == "apple-clang":
+            return XCRun(self._conanfile).ar.replace("\\", "/")
+        return None
+
+    def _build_cross_flags(self):
+        flags = []
+        if not cross_building(self._conanfile):
+            return flags
+        arch = self._conanfile.settings.arch
+
+        if arch.startswith("arm"):
+            if "hf" in arch:
+                flags.append("-mfloat-abi=hard")
+        elif self._conanfile.settings.os == "Emscripten":
+            pass
+        elif arch in ["x86", "x86_64"]:
+            pass
+        elif arch.startswith("ppc"):
+            pass
+        elif arch.startswith("mips"):
+            pass
+        elif arch.startswith("riscv"):
+            pass
+        else:
+            self._conanfile.output.info(f"Unable to detect the appropriate ABI for {arch} architecture.")
+        self._conanfile.output.debug(f"Cross building flags: {flags}")
+        return flags
+
+    def _is_apple_embedded_platform(self):
+        return self._conanfile.settings.os in ["iOS", "watchOS", "tvOS"]
+
+    def _ranlib(self):
+        ranlib = VirtualBuildEnv(self._conanfile).vars().get("RANLIB")
+        if ranlib:
+            return ranlib.replace("\\", "/")
+        if is_apple_os(self._conanfile) and self._conanfile.settings.compiler == "apple-clang":
+            return XCRun(self._conanfile).ranlib.replace("\\", "/")
+        return None
+
+    def _b2_os(self):
+        return {
+            "Windows": "windows",
+            "WindowsStore": "windows",
+            "Linux": "linux",
+            "Android": "android",
+            "Macos": "darwin",
+            "iOS": "iphone",
+            "watchOS": "iphone",
+            "tvOS": "appletv",
+            "FreeBSD": "freebsd",
+            "SunOS": "solaris",
+        }.get(str(self._conanfile.settings.os))
         
     def _get_toolset(self):
-        """Determine the B2 toolset from Conan settings"""
-        compiler = self._conanfile.settings.get_safe("compiler")
-        
-        toolset_map = {
-            "gcc": "gcc",
-            "clang": "clang",
-            "apple-clang": "clang",
-            "msvc": "msvc",
-            "intel-cc": "intel",
-        }
-        
-        return toolset_map.get(compiler, compiler)
+
+        if is_msvc(self._conanfile):
+            return "clang-win" if self._conanfile.settings.compiler.toolset == "ClangCL" else "msvc"
+        if self._conanfile.settings.os == "Windows" and self._conanfile.settings.compiler == "clang":
+            return "clang-win"
+        if self._conanfile.settings.os == "Emscripten" and self._conanfile.settings.compiler in ("clang", "emcc"):
+            return "emscripten"
+        if self._conanfile.settings.compiler == "gcc" and is_apple_os(self._conanfile):
+            return "darwin"
+        if self._conanfile.settings.compiler == "apple-clang":
+            return "clang-darwin"
+        if self._conanfile.settings.os == "Android" and self._conanfile.settings.compiler == "clang":
+            return "clang-linux"
+        if self._conanfile.settings.compiler in ["clang", "gcc"]:
+            return str(self._conanfile.settings.compiler)
+        if self._conanfile.settings.compiler == "sun-cc":
+            return "sunpro"
+        if "intel" in str(self._conanfile.settings.compiler):
+            return {
+                "Macos": "intel-darwin",
+                "Windows": "intel-win",
+                "Linux": "intel-linux",
+            }[str(self._conanfile.settings.os)]
+
+        return str(self._conanfile.settings.compiler)
     
+    def _get_toolset_version(self):
+        """Get toolset version from settings"""
+        toolset = MSBuildToolchain(self._conanfile).toolset
+        if toolset:
+            match = re.match(r"v(\d+)(\d)$", toolset)
+            if match:
+                return f"{match.group(1)}.{match.group(2)}"
+        return Version(self._conanfile.settings.compiler.version).major
+
     def _get_compiler_executables(self):
         """Get compiler executables from environment or settings"""
-        compiler = self._conanfile.settings.get_safe("compiler")
+        compiler = self._conanfile.settings.compiler
 
         compiler_executables = self._conanfile.conf.get("tools.build:compiler_executables", check_type=dict, default={})
         conf_cc = compiler_executables.get("c")
         conf_cxx = compiler_executables.get("cpp")
         
-        # Check for environment variables first
         virtualenv = VirtualBuildEnv(self._conanfile)
         virtualenv_cc = virtualenv.vars().get("CC")
         virtualenv_cxx = virtualenv.vars().get("CXX")
         
-        env_cc = os.getenv("CC")
-        env_cxx = os.getenv("CXX")
-
-        cc = conf_cc or virtualenv_cc or env_cc
-        cxx = conf_cxx or virtualenv_cxx or env_cxx
-
-        self._conanfile.output.info(f"Detected compiler executables: CC={cc}, CXX={cxx}")
+        cc = conf_cc or virtualenv_cc
+        cxx = conf_cxx or virtualenv_cxx
 
         if not cc or not cxx:
             # Provide defaults based on compiler
@@ -71,6 +163,12 @@ class B2Generator:
             elif compiler == "msvc":
                 # MSVC is auto-detected by B2
                 return None, None
+
+        self._conanfile.output.info(f"Detected compiler executables: CC={cc}, CXX={cxx}")
+        if cxx:
+            cxx = cxx.replace("\\", "/")
+        if cc:
+            cc = cc.replace("\\", "/")
                 
         return cc, cxx
     
@@ -103,32 +201,71 @@ class B2Generator:
     def _generate_user_config(self):
         """Generate user-config.jam with toolset configuration"""
         toolset = self._get_toolset()
-        cc, cxx = self._get_compiler_executables()
+        toolset_version = self._get_toolset_version()
+        _, cxx = self._get_compiler_executables()
+
+        content = ["# WARNING: Conan auto generated user-config.jam - DO NOT EDIT", ""]
+
+        config_line = f"using {toolset}"
+        if toolset_version:
+            config_line += f" : {toolset_version}"
+        if cxx and not is_msvc(self._conanfile):
+            config_line += f" : {cxx}"
+        config_line += " :"
+
+        content.append(config_line)
+
+        if is_apple_os(self._conanfile):
+            apple_line = ""
+            if self.settings.compiler == "apple-clang":
+                apple_line += f" -isysroot {XCRun(self._conanfile).sdk_path}"
+            if self.settings.get_safe("arch"):
+                apple_line += f" -arch {to_apple_arch(self._conanfile)}"
+            content.append(apple_line)
+
+        if self._ar():
+            ar_line = f'<archiver>"{self._ar()}" '
+            content.append(ar_line)
         
-        content = ["# Conan generated user-config.jam", ""]
-        
-        if toolset and toolset != "msvc":
-            # For non-MSVC compilers, configure the toolset
-            version = self._conanfile.settings.get_safe("compiler.version")
-            
-            config_line = f"using {toolset}"
-            if version:
-                config_line += f" : {version}"
-            if cxx:
-                config_line += f" : {cxx}"
-            config_line += " ;"
-            
-            content.append(config_line)
-        elif toolset == "msvc":
-            # MSVC configuration
-            version = self._conanfile.settings.get_safe("compiler.version")
-            if version:
-                content.append(f"using msvc : {version} ;")
-            else:
-                content.append("using msvc ;")
-        
-        content.append("")
-        
+        if self._ranlib():
+            ranlib_line = f'<ranlib>"{self._ranlib()}" '
+            content.append(ranlib_line)
+
+        cxxflags = " ".join(self._conanfile.conf.get("tools.build:cxxflags", default=[], check_type=list)) + " "
+        cflags = " ".join(self._conanfile.conf.get("tools.build:cflags", default=[], check_type=list)) + " "
+        buildenv_vars = VirtualBuildEnv(self._conanfile).vars()
+        cppflags = buildenv_vars.get("CPPFLAGS", "") + " "
+        ldflags = " ".join(self._conanfile.conf.get("tools.build:sharedlinkflags", default=[], check_type=list)) + " "
+        asflags = buildenv_vars.get("ASFLAGS", "") + " "
+
+        sysroot = self._conanfile.conf.get("tools.build:sysroot")
+        if sysroot and not is_msvc(self):
+            sysroot = sysroot.replace("\\", "/")
+            sysroot = f'"{sysroot}"' if ' ' in sysroot else sysroot
+            cppflags += f"--sysroot={sysroot} "
+            ldflags += f"--sysroot={sysroot} "
+
+        flag_lines = []
+        if cxxflags.strip():
+            flag_lines.append(f'<cxxflags>"{cxxflags.strip()}" ')
+        if cflags.strip():
+            flag_lines.append(f'<cflags>"{cflags.strip()}" ')
+        if cppflags.strip() or self._build_cross_flags():
+            compiler_flags = cppflags.strip() + " "
+            compiler_flags += " ".join(self._build_cross_flags())
+            flag_lines.append(f'<compileflags>"{compiler_flags}" ')
+        if ldflags.strip():
+            flag_lines.append(f'<linkflags>"{ldflags.strip()}" ')
+        if asflags.strip():
+            flag_lines.append(f'<asmflags>"{asflags.strip()}" ')
+        content.extend(flag_lines)
+
+        if self._is_apple_embedded_platform():
+            os_line = f'<target-os>"{self._b2_os()}" '
+            content.append(os_line)
+
+        content.append(" ;")
+
         self.user_config_jam = "\n".join(content)
         save(self._conanfile, "user-config.jam", self.user_config_jam)
         
@@ -253,6 +390,7 @@ class B2Generator:
 class B2ToolGenerator(ConanFile):
     name = "b2-generator-tool"
     version = "0.1.0"
+    package_type = "python-require"
 
     def package_info(self):
         self.generator_info = [B2Generator]
