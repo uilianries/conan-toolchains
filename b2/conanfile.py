@@ -17,11 +17,12 @@ class B2Generator:
     Generates a user-config.jam file with toolset configuration and a 
     conan_b2_toolchain.jam file with dependency information.
     """
+    USER_CONFIG = "user-config.jam"
+    PROJECT_CONFIG = "project-config.jam"
+
 
     def __init__(self, conanfile):
         self._conanfile = conanfile
-        self.user_config_jam = None
-        self.project_config_jam = None
 
     def _validate(self):
         """Validate required settings for B2 generation"""
@@ -43,6 +44,17 @@ class B2Generator:
         
         # Generate project-config.jam with Conan-specific settings
         self._generate_project_config()
+
+    def _get_b2_module_name(self, dependency):
+        name = dependency.ref.name
+        # b2 --help-internal shows that module names are lowercase
+        known_modules = ["bison", "boost", "bzip2", "gettext", "lex", "libjpeg", "libpng", "libtiff",
+                         "lzma", "mpi", "openssl", "pkg-config", "python-config", "qt", "qt3", "qt4",
+                         "qt5", "saxonhe", "scanner", "tntnet", "zlib", "zstd"]
+        if name.lower() in known_modules:
+            return name.lower()
+        mapped_modules = {"xz_utils": "lzma",}
+        return mapped_modules.get(name)
 
     def _ar(self):
         ar = VirtualBuildEnv(self._conanfile).vars().get("AR")
@@ -174,29 +186,51 @@ class B2Generator:
     
     def _get_architecture(self):
         """Get B2 architecture from Conan settings"""
-        arch = self._conanfile.settings.get_safe("arch")
+        if str(self._conanfile.settings.arch).startswith("x86"):
+            return "x86"
+        if str(self._conanfile.settings.arch).startswith("ppc"):
+            return "power"
+        if str(self._conanfile.settings.arch).startswith("arm"):
+            return "arm"
+        if str(self._conanfile.settings.arch).startswith("sparc"):
+            return "sparc"
+        if str(self._conanfile.settings.arch).startswith("mips64"):
+            return "mips64"
+        if str(self._conanfile.settings.arch).startswith("mips"):
+            return "mips1"
+        if str(self._conanfile.settings.arch).startswith("s390"):
+            return "s390x"
+        if str(self._conanfile.settings.arch).startswith("riscv"):
+            return "riscv"
         
-        arch_map = {
-            "x86": "x86",
-            "x86_64": "x86",
-            "armv7": "arm",
-            "armv8": "arm",
-            "armv8_32": "arm",
-            "armv8.3": "arm",
-        }
-        
-        return arch_map.get(arch, arch)
+        return None    
     
     def _get_address_model(self):
         """Get B2 address-model from Conan settings"""
-        arch = self._conanfile.settings.get_safe("arch")
-        
-        if arch in ["x86_64", "armv8", "armv8.3"]:
+        if self._conanfile.settings.arch in ("x86_64", "ppc64", "ppc64le", "mips64",
+                                  "armv8", "armv8.3", "sparcv9", "s390x", "riscv64",
+                                  "wasm64"):
             return "64"
-        elif arch in ["x86", "armv7", "armv8_32"]:
-            return "32"
-        
-        return None
+        return "32"
+
+    def _create_library_config(self, dependency):
+        self._conanfile.output.info(f"Dependency for B2: {dependency.ref.name}")
+        aggregated_cpp_info = dependency.cpp_info.aggregated_components()
+        if len(aggregated_cpp_info.libs) == 0:
+            return ""
+
+        name = dependency.ref.name
+        includedir = aggregated_cpp_info.includedirs[0].replace("\\", "/")
+        includedir = f"\"{includedir}\""
+        libdir = aggregated_cpp_info.libdirs[0].replace("\\", "/")
+        libdir = f"\"{libdir}\""
+        lib = aggregated_cpp_info.libs[0]
+        version = dependency.ref.version
+        # TODO _get_b2_module_name(dependency) for known modules
+        return f"\nusing {name} : {version} : " \
+                f"<include>{includedir} " \
+                f"<search>{libdir} " \
+                f"<name>{lib} ;"
     
     def _generate_user_config(self):
         """Generate user-config.jam with toolset configuration"""
@@ -204,7 +238,7 @@ class B2Generator:
         toolset_version = self._get_toolset_version()
         _, cxx = self._get_compiler_executables()
 
-        content = ["# WARNING: Conan auto generated user-config.jam - DO NOT EDIT", ""]
+        content = [f"# WARNING: Conan auto generated {self.USER_CONFIG} - DO NOT EDIT", ""]
 
         config_line = f"using {toolset}"
         if toolset_version:
@@ -266,19 +300,17 @@ class B2Generator:
 
         content.append(" ;")
 
-        self.user_config_jam = "\n".join(content)
-        save(self._conanfile, "user-config.jam", self.user_config_jam)
+        user_config_jam = "\n".join(content)
+        save(self._conanfile, self.USER_CONFIG, user_config_jam)
         
     def _generate_project_config(self):
         """Generate project-config.jam with Conan settings and dependencies"""
-        content = ["# Conan generated project-config.jam", ""]
-        
+        content = [f"# WARNING: Conan auto generated {self.PROJECT_CONFIG} - DO NOT EDIT", ""]
+
         # Add build settings
-        build_type = self._conanfile.settings.get_safe("build_type")
-        if build_type:
-            variant = build_type.lower()
-            content.append(f"# Build type: {variant}")
-        
+        build_type = str(self._conanfile.settings.build_type).lower()
+        content.append(f"# Build type: {build_type}")
+
         # Add architecture settings
         arch = self._get_architecture()
         address_model = self._get_address_model()
@@ -293,42 +325,15 @@ class B2Generator:
         # Add dependency information
         content.append("# Conan dependencies")
         
-        for dep in self._conanfile.dependencies.values():
-            dep_name = dep.ref.name
-            
-            # Include paths
-            if dep.cpp_info.includedirs:
-                for include_dir in dep.cpp_info.includedirs:
-                    content.append(f"# {dep_name} include: {include_dir}")
-            
-            # Library paths
-            if dep.cpp_info.libdirs:
-                for lib_dir in dep.cpp_info.libdirs:
-                    content.append(f"# {dep_name} libdir: {lib_dir}")
-            
-            # Libraries
-            if dep.cpp_info.libs:
-                for lib in dep.cpp_info.libs:
-                    content.append(f"# {dep_name} lib: {lib}")
-        
+        for require, dependency in self._conanfile.dependencies.items():
+            if require.direct and not require.build and not require.test:
+                content.append(self._create_library_config(dependency))
+
         content.append("")
         
-        # Generate path-constant for dependencies
-        content.append("# Dependency paths")
-        for dep in self._conanfile.dependencies.values():
-            dep_name = dep.ref.name.upper().replace("-", "_")
-            if dep.cpp_info.includedirs:
-                include_path = dep.cpp_info.includedirs[0]
-                content.append(f"path-constant {dep_name}_INCLUDE : {include_path} ;")
-            if dep.cpp_info.libdirs:
-                lib_path = dep.cpp_info.libdirs[0]
-                content.append(f"path-constant {dep_name}_LIB : {lib_path} ;")
-        
-        content.append("")
-        
-        self.project_config_jam = "\n".join(content)
-        save(self._conanfile, "project-config.jam", self.project_config_jam)
-    
+        project_config_jam = "\n".join(content)
+        save(self._conanfile, self.PROJECT_CONFIG, project_config_jam)
+
     def _get_b2_flags(self):
         """Get B2 command line flags from Conan settings"""
         flags = []
@@ -390,6 +395,11 @@ class B2Generator:
 class B2ToolGenerator(ConanFile):
     name = "b2-generator-tool"
     version = "0.1.0"
+    url = "https://github.com/conan-io/conan-toolchains"
+    homepage = "https://github.com/conan-io/conan-toolchains"
+    description = "B2 (Boost.Build) toolchain generator for Conan"
+    license = "MIT"
+    topics = ("b2", "generator", "toolchain")
     package_type = "python-require"
 
     def package_info(self):

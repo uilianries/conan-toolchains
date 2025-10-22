@@ -9,12 +9,13 @@ class TestPackage(ConanFile):
     def test(self):
         b2generator = self.python_requires["b2-generator-tool"].module.B2Generator(self)
         b2generator.generate()
+
         user_config = os.path.join(self.generators_folder, "user-config.jam")
         assert os.path.exists(user_config)
         content = load(self, user_config)
         self.output.info(f"user-config.jam content:\n{content}")
 
-
-
-
-        
+        project_config = os.path.join(self.generators_folder, "project-config.jam")
+        assert os.path.exists(project_config)
+        content = load(self, project_config)
+        self.output.info(f"project-config.jam content:\n{content}")
