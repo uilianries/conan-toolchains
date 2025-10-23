@@ -49,7 +49,7 @@ class B2Generator:
         name = dependency.ref.name
         # b2 --help-internal shows that module names are lowercase
         known_modules = ["bison", "boost", "bzip2", "gettext", "lex", "libjpeg", "libpng", "libtiff",
-                         "lzma", "mpi", "openssl", "pkg-config", "python-config", "qt", "qt3", "qt4",
+                         "lzma", "mpi", "openssl", "pkg-config", "python", "qt", "qt3", "qt4",
                          "qt5", "saxonhe", "scanner", "tntnet", "zlib", "zstd"]
         if name.lower() in known_modules:
             return name.lower()
@@ -219,14 +219,16 @@ class B2Generator:
         if len(aggregated_cpp_info.libs) == 0:
             return ""
 
-        name = dependency.ref.name
+        name = self._get_b2_module_name(dependency)
+        if not name:
+            return ""
+
         includedir = aggregated_cpp_info.includedirs[0].replace("\\", "/")
         includedir = f"\"{includedir}\""
         libdir = aggregated_cpp_info.libdirs[0].replace("\\", "/")
         libdir = f"\"{libdir}\""
         lib = aggregated_cpp_info.libs[0]
         version = dependency.ref.version
-        # TODO _get_b2_module_name(dependency) for known modules
         return f"\nusing {name} : {version} : " \
                 f"<include>{includedir} " \
                 f"<search>{libdir} " \
