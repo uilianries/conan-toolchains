@@ -14,7 +14,7 @@ from conan.errors import ConanException
 class B2Generator:
     """
     B2 (Boost.Build) toolchain generator for Conan.
-    Generates a user-config.jam file with toolset configuration and a 
+    Generates a user-config.jam file with toolset configuration and a
     conan_b2_toolchain.jam file with dependency information.
     """
     USER_CONFIG = "user-config.jam"
@@ -41,7 +41,7 @@ class B2Generator:
 
         # Generate user-config.jam with toolset configuration
         self._generate_user_config()
-        
+
         # Generate project-config.jam with Conan-specific settings
         self._generate_project_config()
 
@@ -112,11 +112,11 @@ class B2Generator:
             "FreeBSD": "freebsd",
             "SunOS": "solaris",
         }.get(str(self._conanfile.settings.os))
-        
+
     def _get_toolset(self):
 
         if is_msvc(self._conanfile):
-            return "clang-win" if self._conanfile.settings.compiler.toolset == "ClangCL" else "msvc"
+            return "msvc"
         if self._conanfile.settings.os == "Windows" and self._conanfile.settings.compiler == "clang":
             return "clang-win"
         if self._conanfile.settings.os == "Emscripten" and self._conanfile.settings.compiler in ("clang", "emcc"):
@@ -139,7 +139,7 @@ class B2Generator:
             }[str(self._conanfile.settings.os)]
 
         return str(self._conanfile.settings.compiler)
-    
+
     def _get_toolset_version(self):
         """Get toolset version from settings"""
         toolset = MSBuildToolchain(self._conanfile).toolset
@@ -156,11 +156,11 @@ class B2Generator:
         compiler_executables = self._conanfile.conf.get("tools.build:compiler_executables", check_type=dict, default={})
         conf_cc = compiler_executables.get("c")
         conf_cxx = compiler_executables.get("cpp")
-        
+
         virtualenv = VirtualBuildEnv(self._conanfile)
         virtualenv_cc = virtualenv.vars().get("CC")
         virtualenv_cxx = virtualenv.vars().get("CXX")
-        
+
         cc = conf_cc or virtualenv_cc
         cxx = conf_cxx or virtualenv_cxx
 
@@ -181,9 +181,9 @@ class B2Generator:
             cxx = cxx.replace("\\", "/")
         if cc:
             cc = cc.replace("\\", "/")
-                
+
         return cc, cxx
-    
+
     def _get_architecture(self):
         """Get B2 architecture from Conan settings"""
         if str(self._conanfile.settings.arch).startswith("x86"):
@@ -202,9 +202,9 @@ class B2Generator:
             return "s390x"
         if str(self._conanfile.settings.arch).startswith("riscv"):
             return "riscv"
-        
-        return None    
-    
+
+        return None
+
     def _get_address_model(self):
         """Get B2 address-model from Conan settings"""
         if self._conanfile.settings.arch in ("x86_64", "ppc64", "ppc64le", "mips64",
@@ -233,7 +233,7 @@ class B2Generator:
                 f"<include>{includedir} " \
                 f"<search>{libdir} " \
                 f"<name>{lib} ;"
-    
+
     def _generate_user_config(self):
         """Generate user-config.jam with toolset configuration"""
         toolset = self._get_toolset()
@@ -262,7 +262,7 @@ class B2Generator:
         if self._ar():
             ar_line = f'<archiver>"{self._ar()}" '
             content.append(ar_line)
-        
+
         if self._ranlib():
             ranlib_line = f'<ranlib>"{self._ranlib()}" '
             content.append(ranlib_line)
@@ -304,7 +304,7 @@ class B2Generator:
 
         user_config_jam = "\n".join(content)
         save(self._conanfile, self.USER_CONFIG, user_config_jam)
-        
+
     def _generate_project_config(self):
         """Generate project-config.jam with Conan settings and dependencies"""
         content = [f"# WARNING: Conan auto generated {self.PROJECT_CONFIG} - DO NOT EDIT", ""]
@@ -316,44 +316,44 @@ class B2Generator:
         # Add architecture settings
         arch = self._get_architecture()
         address_model = self._get_address_model()
-        
+
         if arch:
             content.append(f"# Architecture: {arch}")
         if address_model:
             content.append(f"# Address model: {address_model}")
-        
+
         content.append("")
-        
+
         # Add dependency information
         content.append("# Conan dependencies")
-        
+
         for require, dependency in self._conanfile.dependencies.items():
             if require.direct and not require.build and not require.test:
                 content.append(self._create_library_config(dependency))
 
         content.append("")
-        
+
         project_config_jam = "\n".join(content)
         save(self._conanfile, self.PROJECT_CONFIG, project_config_jam)
 
     def _get_b2_flags(self):
         """Get B2 command line flags from Conan settings"""
         flags = []
-        
+
         # Variant (build type)
         build_type = self._conanfile.settings.get_safe("build_type")
         if build_type:
             flags.append(f"variant={build_type.lower()}")
-        
+
         # Threading
         flags.append("threading=multi")
-        
+
         # Link type
         if self._conanfile.options.get_safe("shared"):
             flags.append("link=shared")
         else:
             flags.append("link=static")
-        
+
         # Runtime linking (Windows)
         runtime = self._conanfile.settings.get_safe("compiler.runtime")
         if runtime:
@@ -361,31 +361,31 @@ class B2Generator:
                 flags.append("runtime-link=static")
             else:
                 flags.append("runtime-link=shared")
-        
+
         # Address model
         address_model = self._get_address_model()
         if address_model:
             flags.append(f"address-model={address_model}")
-        
+
         # Architecture
         arch = self._get_architecture()
         if arch:
             flags.append(f"architecture={arch}")
-        
+
         # Jobs
         jobs = build_jobs(self._conanfile)
         if jobs:
             flags.append(f"-j{jobs}")
-        
+
         return flags
-    
+
     def get_b2_command_flags(self):
         """
         Get the B2 command line flags as a list.
         Useful for passing to b2 command in build() method.
         """
         return self._get_b2_flags()
-    
+
     def get_b2_command_flags_str(self):
         """
         Get the B2 command line flags as a string.
