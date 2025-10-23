@@ -116,7 +116,7 @@ class B2Generator:
             return XCRun(self._conanfile).ranlib.replace("\\", "/")
         return None
 
-    def _b2_os(self):
+    def _get_os(self):
         return {
             "Windows": "windows",
             "WindowsStore": "windows",
@@ -271,7 +271,7 @@ class B2Generator:
                 apple_line += f" -isysroot {XCRun(self._conanfile).sdk_path}"
             if self._conanfile.settings.get_safe("arch"):
                 apple_line += f" -arch {to_apple_arch(self._conanfile)}"
-            config_line += f" : {apple_line.strip()}"
+            config_line += f" {apple_line.strip()}"
 
         config_line += " ;"
 
@@ -295,36 +295,36 @@ class B2Generator:
             ranlib_line = f'<ranlib>"{self._ranlib()}" '
             content.append(ranlib_line)
 
-        cxxflags = " ".join(self._conanfile.conf.get("tools.build:cxxflags", default=[], check_type=list)) + " "
-        cflags = " ".join(self._conanfile.conf.get("tools.build:cflags", default=[], check_type=list)) + " "
-        defines = " ".join(self._conanfile.conf.get("tools.build:defines", default=[], check_type=list)) + " "
+        cxxflags = self._conanfile.conf.get("tools.build:cxxflags", default=[], check_type=list)
+        cflags = self._conanfile.conf.get("tools.build:cflags", default=[], check_type=list)
+        defines = self._conanfile.conf.get("tools.build:defines", default=[], check_type=list)
         buildenv_vars = VirtualBuildEnv(self._conanfile).vars()
-        cppflags = buildenv_vars.get("CPPFLAGS", "") + " "
-        ldflags = " ".join(self._conanfile.conf.get("tools.build:sharedlinkflags", default=[], check_type=list)) + " "
-        asflags = buildenv_vars.get("ASFLAGS", "") + " "
+        cppflags = buildenv_vars.get("CPPFLAGS", "").split(" ")
+        ldflags = self._conanfile.conf.get("tools.build:sharedlinkflags", default=[], check_type=list)
+        asflags = buildenv_vars.get("ASFLAGS", "").split(" ")
 
         sysroot = self._conanfile.conf.get("tools.build:sysroot")
         if sysroot and not is_msvc(self):
             sysroot = sysroot.replace("\\", "/")
             sysroot = f'"{sysroot}"' if ' ' in sysroot else sysroot
-            cppflags += f"--sysroot={sysroot} "
-            ldflags += f"--sysroot={sysroot} "
+            cppflags.append(f"--sysroot={sysroot} ")
+            ldflags.append(f"--sysroot={sysroot} ")
 
-        if cppflags.strip() or self._build_cross_flags():
-            compiler_flags = cppflags.strip() + " "
-            compiler_flags += " ".join(self._build_cross_flags())
-            self.set_feature("compileflags", compiler_flags.strip())
-        if asflags.strip():
-            self.set_feature("asmflags", asflags.strip())
-
-        if cxxflags.strip():
-            self.set_feature("cxxflags", cxxflags.strip())
-        if cflags.strip():
-            self.set_feature("cflags", cflags.strip())
-        if ldflags.strip():
-            self.set_feature("linkflags", ldflags.strip())
-        if defines.strip():
-            self.set_feature("define", defines.strip())
+        if cppflags or self._build_cross_flags():
+            compiler_flags = cppflags or []
+            compiler_flags.extend(self._build_cross_flags())
+            for it in compiler_flags:
+                self.set_feature("compileflags", it)
+        if asflags:
+            self.set_feature("asmflags", asflags)
+        if cxxflags:
+            self.set_feature("cxxflags", cxxflags)
+        if cflags:
+            self.set_feature("cflags", cflags)
+        if ldflags:
+            self.set_feature("linkflags", ldflags)
+        if defines:
+            self.set_feature("define", defines)
 
         if self._conanfile.options.get_safe("shared"):
             self.set_feature("link", "shared")
@@ -348,11 +348,16 @@ class B2Generator:
             self.set_feature("runtime-link", "static" if is_msvc_static_runtime(self) else "shared")
             self.set_feature("runtime-debugging", "on" if "d" in msvc_runtime_flag(self) else "off")
 
-        if self._is_apple_embedded_platform():
-            self.set_feature("target-os", self._b2_os())
+        target_os = self._get_os()
+        if target_os:
+            self.set_feature("target-os", target_os)
 
         for name, value in self._features.items():
-            content.append(f'      <{name}>{value}')
+            if isinstance(value, list):
+                for it in value:
+                    content.append(f'      <{name}>{it}')
+            else:
+                content.append(f'      <{name}>{value}')
 
         content.append("   ;")
 
@@ -401,6 +406,11 @@ class B2Generator:
                           "use", "variant", "visibility", "warnings", "warnings-as-errors"]
         if name not in valid_features:
             raise ConanException(f"B2Generator: Invalid feature '{name}'. See https://www.bfgroup.xyz/b2/tutorial.html#_feature_reference")
+        if isinstance(value, list):
+            value = [v for v in value if v]
+            if not value:
+                self._conanfile.output.debug(f"B2Generator: Ignoring empty feature list for '{name}'")
+                return
         self._features[name] = value
 
 class B2ToolGenerator(ConanFile):
