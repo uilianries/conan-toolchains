@@ -118,7 +118,7 @@ class B2Generator:
             return XCRun(self._conanfile).ranlib.replace("\\", "/")
         return None
 
-    def _get_os(self):
+    def _get_os(self, settings_os):
         return {
             "Windows": "windows",
             "WindowsStore": "windows",
@@ -130,7 +130,7 @@ class B2Generator:
             "tvOS": "appletv",
             "FreeBSD": "freebsd",
             "SunOS": "solaris",
-        }.get(str(self._conanfile.settings.os))
+        }.get(str(settings_os))
 
     def _get_toolset(self):
 
@@ -353,9 +353,13 @@ class B2Generator:
             self.set_feature("runtime-link", "static" if is_msvc_static_runtime(self) else "shared")
             self.set_feature("runtime-debugging", "on" if "d" in msvc_runtime_flag(self) else "off")
 
-        target_os = self._get_os()
+        target_os = self._get_os(self._conanfile.settings.os)
         if target_os:
             self.set_feature("target-os", target_os)
+
+        build_os = self._get_os(self._conanfile.build_settings.os)
+        if build_os:
+            self.set_feature("os", build_os)
 
         for name, value in self._features.items():
             if isinstance(value, list):
