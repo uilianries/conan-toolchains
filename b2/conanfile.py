@@ -1,4 +1,5 @@
 import re
+import shutil
 from conan import ConanFile
 from conan.tools.files import save
 from conan.tools.microsoft import is_msvc, MSBuildToolchain, is_msvc_static_runtime, msvc_runtime_flag
@@ -182,24 +183,25 @@ class B2Generator:
         cc = conf_cc or virtualenv_cc
         cxx = conf_cxx or virtualenv_cxx
 
-        if not cc or not cxx:
-            # Provide defaults based on compiler
-            if compiler == "gcc":
-                cc = cc or "gcc"
-                cxx = cxx or "g++"
-            elif compiler in ["clang", "apple-clang"]:
-                cc = cc or "clang"
-                cxx = cxx or "clang++"
-            elif compiler == "msvc":
+        if not cxx:
+            compiler_version = Version(self._conanfile.settings.compiler.version)
+            major = compiler_version.major
+            if is_apple_os(self._conanfile) and self._conanfile.settings.compiler == "apple-clang":
+                cxx = XCRun(self._conanfile).cxx
+            elif self._conanfile.settings.compiler == "gcc":
+                cxx = shutil.which(f"g++-{compiler_version}") or shutil.which(f"g++-{major}") or shutil.which("g++") or ""
+            elif self._conanfile.settings.compiler == "clang":
+                cxx = shutil.which(f"clang++-{compiler_version}") or shutil.which(f"clang++-{major}") or shutil.which("clang++") or ""
+            elif self._conanfile.settings.compiler == "msvc":
                 # MSVC is auto-detected by B2
                 return None, None
 
-        self._conanfile.output.info(f"Detected compiler executables: CC={cc}, CXX={cxx}")
         if cxx:
             cxx = cxx.replace("\\", "/")
         if cc:
             cc = cc.replace("\\", "/")
 
+        self._conanfile.output.info(f"Detected compiler executables: CC={cc}, CXX={cxx}")
         return cc, cxx
 
     def _get_architecture(self):
