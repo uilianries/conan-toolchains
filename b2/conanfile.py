@@ -352,9 +352,9 @@ class B2Generator:
             self.set_feature("runtime-link", "static" if is_msvc_static_runtime(self) else "shared")
             self.set_feature("runtime-debugging", "on" if "d" in msvc_runtime_flag(self) else "off")
 
-        target_os = self._get_os()
-        if target_os:
-            self.set_feature("target-os", target_os)
+        #target_os = self._get_os()
+        #if target_os:
+        #    self.set_feature("target-os", target_os)
 
         for name, value in self._features.items():
             if isinstance(value, list):
