@@ -22,6 +22,7 @@ class B2Generator:
     def __init__(self, conanfile):
         self._conanfile = conanfile
         self._features = {}
+        self._variables = {}
 
     def _validate(self):
         """Validate required settings for B2 generation"""
@@ -330,6 +331,8 @@ class B2Generator:
             self.set_feature("link", "shared")
         else:
             self.set_feature("link", "static")
+        if self._conanfile.options.get_safe("fPIC"):
+            self.set_feature("cxxflags", "-fPIC")
 
         if self._conanfile.settings.build_type == "Debug":
             self.set_feature("variant", "debug")
@@ -383,6 +386,11 @@ class B2Generator:
 
         content.append("")
 
+        # Add variables
+        content.append("# Conan variables")
+        for variable, value in self._variables.items():
+            content.append(f"{variable} = {value} ;")
+
         # Add dependency information
         content.append("# Conan dependencies")
 
@@ -394,6 +402,7 @@ class B2Generator:
 
         project_config_jam = "\n".join(content)
         save(self._conanfile, self.PROJECT_CONFIG, project_config_jam)
+
 
     def set_feature(self, name, value):
         # https://www.bfgroup.xyz/b2/tutorial.html#_feature_reference
@@ -412,6 +421,30 @@ class B2Generator:
                 self._conanfile.output.debug(f"B2Generator: Ignoring empty feature list for '{name}'")
                 return
         self._features[name] = value
+
+
+    def add_dependency(self, name, version=None, executable=None, include_dir=None, lib_dir=None, lib_name=None):
+        """Add a dependency to be included in the generated project-config.jam"""
+        dep_config = f"using {name}"
+        if version:
+            dep_config += f" : {version}"
+        if executable:
+            executable = executable.replace("\\", "/")
+            dep_config += f" : \"{executable}\""
+        if include_dir:
+            include_dir = include_dir.replace("\\", "/")
+            dep_config += f" <include>\"{include_dir}\""
+        if lib_dir:
+            lib_dir = lib_dir.replace("\\", "/")
+            dep_config += f" <search>\"{lib_dir}\""
+        if lib_name:
+            dep_config += f" <name>{lib_name}"
+        dep_config += " ;"
+
+
+    def set_variable(self, variable, value):
+        """Set a variable in the generated project-config.jam"""
+        self._variables[variable] = value
 
 class B2ToolGenerator(ConanFile):
     name = "b2-generator-tool"
