@@ -280,7 +280,7 @@ class B2Generator:
         content.append(config_line)
 
         content.append("project")
-        content.append("    : requirements")
+        content.append("    : default-build")
 
         toolset_full = f"{toolset}-{toolset_version}" if toolset_version else toolset
         self.set_feature("toolset", toolset_full)
@@ -340,10 +340,6 @@ class B2Generator:
         else:
             self.set_feature("variant", "release")
 
-        arch = self._get_architecture()
-        if arch:
-            self.set_feature("architecture", arch)
-
         address_model = self._get_address_model()
         if address_model:
             self.set_feature("address-model", address_model)
@@ -352,9 +348,13 @@ class B2Generator:
             self.set_feature("runtime-link", "static" if is_msvc_static_runtime(self) else "shared")
             self.set_feature("runtime-debugging", "on" if "d" in msvc_runtime_flag(self) else "off")
 
-        #target_os = self._get_os()
-        #if target_os:
-        #    self.set_feature("target-os", target_os)
+        target_os = self._get_os()
+        if target_os:
+            self.set_feature("target-os", target_os)
+
+        arch = self._get_architecture()
+        if arch:
+            self.set_feature("architecture", arch)
 
         for name, value in self._features.items():
             if isinstance(value, list):
