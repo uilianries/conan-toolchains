@@ -7,6 +7,7 @@ from conan.tools.apple import is_apple_os, XCRun, to_apple_arch
 from conan.tools.scm import Version
 from conan.tools.env import VirtualBuildEnv
 from conan.tools.build import cross_building, cppstd_flag
+from conan.tools.gnu import AutotoolsToolchain
 from conan.errors import ConanException
 
 
@@ -168,6 +169,20 @@ class B2Generator:
                 return f"{match.group(1)}.{match.group(2)}"
         return Version(self._conanfile.settings.compiler.version).major
 
+    def _get_apple_flags(self):
+        cxx_flags = []
+        link_flags = []
+        if is_apple_os(self._conanfile):
+            apple_min_version_flag = AutotoolsToolchain(self._conanfile).apple_min_version_flag
+            if apple_min_version_flag:
+                cxx_flags.append(apple_min_version_flag)
+                link_flags.append(apple_min_version_flag)
+            os_subsystem = self._conanfile.settings.get_safe("os.subsystem")
+            if os_subsystem == "catalyst":
+                cxx_flags.append("--target=arm64-apple-ios-macabi")
+                link_flags.append("--target=arm64-apple-ios-macabi")
+        return cxx_flags, link_flags
+
     def _get_compiler_executables(self):
         """Get compiler executables from environment or settings"""
         compiler = self._conanfile.settings.compiler
@@ -304,6 +319,7 @@ class B2Generator:
         cppflags = buildenv_vars.get("CPPFLAGS", "").split(" ")
         ldflags = self._conanfile.conf.get("tools.build:sharedlinkflags", default=[], check_type=list)
         asflags = buildenv_vars.get("ASFLAGS", "").split(" ")
+        strip = self._conanfile.conf.get("tools.build:install_strip", default=False, check_type=bool)
 
         sysroot = self._conanfile.conf.get("tools.build:sysroot")
         if sysroot and not is_msvc(self):
@@ -337,8 +353,11 @@ class B2Generator:
 
         if self._conanfile.settings.build_type == "Debug":
             self.set_feature("variant", "debug")
-        else:
+        elif self._conanfile.settings.build_type == "Release":
             self.set_feature("variant", "release")
+        elif self._conanfile.settings.build_type == "RelWithDebInfo":
+            self.set_feature("variant", "release")
+            self.set_feature("debug-symbols", "on")
 
         address_model = self._get_address_model()
         if address_model:
@@ -355,6 +374,15 @@ class B2Generator:
         arch = self._get_architecture()
         if arch:
             self.set_feature("architecture", arch)
+
+        cxx_apple_flags, link_apple_flags = self._get_apple_flags()
+        for flag in cxx_apple_flags:
+            self.set_feature("cxxflags", flag)
+        for flag in link_apple_flags:
+            self.set_feature("linkflags", flag)
+
+        if strip:
+            self.set_feature("strip", "on")
 
         for name, value in self._features.items():
             if isinstance(value, list):
