@@ -65,6 +65,14 @@ class B2Generator:
 
         return None, cppstd_version
 
+    def _get_stdlib(self):
+        libcxx = self._conanfile.settings.get_safe("compiler.libcxx")
+        return {
+            "libc++": "libc++",
+            "libstdc++11": "gnu11",
+            "libstdc++": "gnu",
+        }.get(libcxx, default="native")
+
     def _get_b2_module_name(self, dependency):
         name = dependency.ref.name
         # b2 --help-internal shows that module names are lowercase
@@ -305,6 +313,9 @@ class B2Generator:
             self.set_feature("cxxstd-dialect", dialect)
         self.set_feature("cxxstd", cppstd)
 
+        stdlib = self._get_stdlib()
+        self.set_feature("stdlib", stdlib)
+
         if self._ar():
             self.set_feature("archiver", self._ar())
 
@@ -320,6 +331,7 @@ class B2Generator:
         ldflags = self._conanfile.conf.get("tools.build:sharedlinkflags", default=[], check_type=list)
         asflags = buildenv_vars.get("ASFLAGS", "").split(" ")
         strip = self._conanfile.conf.get("tools.build:install_strip", default=False, check_type=bool)
+        apple_bitcode = self.conf.get("tools.apple:enable_bitcode", default=False, check_type=bool)
 
         sysroot = self._conanfile.conf.get("tools.build:sysroot")
         if sysroot and not is_msvc(self):
@@ -383,6 +395,9 @@ class B2Generator:
 
         if strip:
             self.set_feature("strip", "on")
+
+        if apple_bitcode:
+            self.set_feature("cxxflags", "-fembed-bitcode")
 
         for name, value in self._features.items():
             if isinstance(value, list):
