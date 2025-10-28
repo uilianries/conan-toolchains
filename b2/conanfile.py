@@ -65,13 +65,17 @@ class B2Generator:
 
         return None, cppstd_version
 
-    def _get_stdlib(self):
+    def _get_stdlib(self) -> str:
+        """
+        Get the C++ standard library to use.
+        www.bfgroup.xyz/b2/manual/main/index.html#b2.overview.builtins.features
+        """
         libcxx = self._conanfile.settings.get_safe("compiler.libcxx")
         return {
             "libc++": "libc++",
             "libstdc++11": "gnu11",
             "libstdc++": "gnu",
-        }.get(libcxx, default="native")
+        }.get(libcxx, "default")
 
     def _get_b2_module_name(self, dependency):
         name = dependency.ref.name
@@ -331,7 +335,7 @@ class B2Generator:
         ldflags = self._conanfile.conf.get("tools.build:sharedlinkflags", default=[], check_type=list)
         asflags = buildenv_vars.get("ASFLAGS", "").split(" ")
         strip = self._conanfile.conf.get("tools.build:install_strip", default=False, check_type=bool)
-        apple_bitcode = self.conf.get("tools.apple:enable_bitcode", default=False, check_type=bool)
+        apple_bitcode = self._conanfile.conf.get("tools.apple:enable_bitcode", default=False, check_type=bool)
 
         sysroot = self._conanfile.conf.get("tools.build:sysroot")
         if sysroot and not is_msvc(self):
@@ -344,7 +348,8 @@ class B2Generator:
             compiler_flags = cppflags or []
             compiler_flags.extend(self._build_cross_flags())
             for it in compiler_flags:
-                self.set_feature("compileflags", it)
+                if it:
+                    self.set_feature("compileflags", it)
         if asflags:
             self.set_feature("asmflags", asflags)
         if cxxflags:
@@ -450,15 +455,6 @@ class B2Generator:
 
     def set_feature(self, name, value):
         # https://www.bfgroup.xyz/b2/tutorial.html#_feature_reference
-        valid_features = ["address-model", "architecture", "c++-template-depth", "cflags",
-                          "cxxstd", "cxxstd-dialect", "compileflags", "asmflags",
-                          "cxxflags", "debug-symbols", "def-file", "define", "embed-manifest",
-                          "host-os", "include", "inlining", "library", "link", "linkflags",
-                          "location", "name", "optimization", "profiling", "runtime-link",
-                          "search", "source", "target-os", "threading", "toolset", "undef",
-                          "use", "variant", "visibility", "warnings", "warnings-as-errors"]
-        if name not in valid_features:
-            raise ConanException(f"B2Generator: Invalid feature '{name}'. See https://www.bfgroup.xyz/b2/tutorial.html#_feature_reference")
         if isinstance(value, list):
             value = [v for v in value if v]
             if not value:
