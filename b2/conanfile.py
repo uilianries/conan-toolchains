@@ -1,4 +1,5 @@
 import re
+import os
 import shutil
 from conan import ConanFile
 from conan.tools.files import save
@@ -100,7 +101,7 @@ class B2Generator:
         flags = []
         if not cross_building(self._conanfile):
             return flags
-        arch = self._conanfile.settings.arch
+        arch = str(self._conanfile.settings.arch)
 
         if arch.startswith("arm"):
             if "hf" in arch:
@@ -146,7 +147,6 @@ class B2Generator:
         }.get(str(self._conanfile.settings.os))
 
     def _get_toolset(self):
-
         if is_msvc(self._conanfile):
             return "msvc"
         if self._conanfile.settings.os == "Windows" and self._conanfile.settings.compiler == "clang":
@@ -197,8 +197,6 @@ class B2Generator:
 
     def _get_compiler_executables(self):
         """Get compiler executables from environment or settings"""
-        compiler = self._conanfile.settings.compiler
-
         compiler_executables = self._conanfile.conf.get("tools.build:compiler_executables", check_type=dict, default={})
         conf_cc = compiler_executables.get("c")
         conf_cxx = compiler_executables.get("cpp")
@@ -259,6 +257,41 @@ class B2Generator:
             return "64"
         return "32"
 
+    def _get_context_binary_format(self):
+        """
+        Get the binary format for the current context
+        https://www.boost.org/doc/libs/1_89_0/libs/context/doc/html/context/architectures.html
+        """
+        return {
+            "Windows": "pe",
+            "WindowsStore": "pe",
+            "Linux": "elf",
+            "Android": "elf",
+            "Macos": "mach-o",
+            "iOS": "mach-o",
+            "watchOS": "mach-o",
+            "tvOS": "mach-o",
+            "FreeBSD": "elf",
+            "SunOS": "elf",
+        }.get(str(self._conanfile.settings.os))
+
+    def _get_context_abi(self):
+        """
+        Get the ABI for the current context
+        https://www.boost.org/doc/libs/1_89_0/libs/context/doc/html/context/architectures.html
+        """
+        if str(self._conanfile.settings.arch).startswith("x86"):
+            return "ms" if str(self._conanfile.settings.os) in ["Windows", "WindowsStore"] else "sysv"
+        if str(self._conanfile.settings.arch).startswith("ppc"):
+            return "sysv"
+        if str(self._conanfile.settings.arch).startswith("arm"):
+            return "aapcs"
+        if str(self._conanfile.settings.arch).startswith("mips"):
+            return "o32"
+        if str(self._conanfile.settings.arch).startswith("riscv"):
+            return "sysv"
+        return None
+
     def _create_library_config(self, dependency):
         self._conanfile.output.info(f"Dependency for B2: {dependency.ref.name}")
         aggregated_cpp_info = dependency.cpp_info.aggregated_components()
@@ -313,6 +346,7 @@ class B2Generator:
         self.set_feature("toolset", toolset_full)
 
         dialect, cppstd = self._get_cppstd()
+        self._conanfile.output.info(f"B2 C++ standard: {cppstd}, dialect: {dialect}")
         if dialect:
             self.set_feature("cxxstd-dialect", dialect)
         self.set_feature("cxxstd", cppstd)
@@ -361,10 +395,13 @@ class B2Generator:
         if defines:
             self.set_feature("define", defines)
 
+
         if self._conanfile.options.get_safe("shared"):
             self.set_feature("link", "shared")
+            self._conanfile.output.info("B2 link: shared")
         else:
             self.set_feature("link", "static")
+            self._conanfile.output.info("B2 link: static")
         if self._conanfile.options.get_safe("fPIC"):
             self.set_feature("cxxflags", "-fPIC")
 
@@ -377,6 +414,7 @@ class B2Generator:
             self.set_feature("debug-symbols", "on")
 
         address_model = self._get_address_model()
+        self._conanfile.output.info(f"B2 address-model: {address_model}")
         if address_model:
             self.set_feature("address-model", address_model)
 
@@ -389,6 +427,7 @@ class B2Generator:
             self.set_feature("target-os", target_os)
 
         arch = self._get_architecture()
+        self._conanfile.output.info(f"B2 architecture: {arch}")
         if arch:
             self.set_feature("architecture", arch)
 
@@ -414,10 +453,15 @@ class B2Generator:
         content.append("   ;")
 
         user_config_jam = "\n".join(content)
-        save(self._conanfile, self.USER_CONFIG, user_config_jam)
+        user_config_path = os.path.join(self._conanfile.generators_folder, self.USER_CONFIG)
+        save(self._conanfile, user_config_path, user_config_jam)
 
     def _generate_project_config(self):
-        """Generate project-config.jam with Conan settings and dependencies"""
+        """
+        Generate project-config.jam with Conan settings and dependencies
+
+        TODO: This should be moved to B2DepsGenerator in the future
+        """
         content = [f"# WARNING: Conan auto generated {self.PROJECT_CONFIG} - DO NOT EDIT", ""]
 
         # Add build settings
@@ -449,8 +493,18 @@ class B2Generator:
 
         content.append("")
 
+
+        binary_format = self._get_context_binary_format()
+        if binary_format:
+            self.set_feature("boost.context.binary-format", binary_format)
+
+        abi = self._get_context_abi()
+        if abi:
+            self.set_feature("abi", abi)
+
         project_config_jam = "\n".join(content)
-        save(self._conanfile, self.PROJECT_CONFIG, project_config_jam)
+        project_config_path = os.path.join(self._conanfile.generators_folder, self.PROJECT_CONFIG)
+        save(self._conanfile, project_config_path, project_config_jam)
 
 
     def set_feature(self, name, value):

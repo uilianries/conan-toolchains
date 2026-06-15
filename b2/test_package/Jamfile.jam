@@ -1,2 +1,0 @@
-exe hello : main.cpp ;
-# Main target

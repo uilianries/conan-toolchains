@@ -1,0 +1,17 @@
+import path ;
+import option ;
+
+local prefix = [ option.get prefix : "./" ] ;
+
+project mylib
+ : usage-requirements <include>.
+;
+
+lib mylib : mylib.cpp ;
+
+# Install rules in prefix structure
+install install-lib : mylib : <location>$(prefix)/lib ;
+install install-headers : mylib.hpp : <location>$(prefix)/include ;
+
+# Alias for convenience
+alias install : install-lib install-headers ;
